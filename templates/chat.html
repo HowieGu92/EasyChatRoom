@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <title>新车型项目</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.0.1/socket.io.js"></script>
+</head>
+
+
+
+<body>
+    <div class="new-message-indicator" id="unreadCounter"></div>
+    <div class="chat-container">
+        <div class="sidebar">
+            <h3>在线用户 (<span id="user-count">0</span>)</h3>
+            <ul id="user-list"></ul>
+        </div>
+
+        <div class="main-chat">
+            <div id="chat-messages"></div>
+
+            <!-- 修改输入框区域 -->
+            <div class="input-area">
+                <!-- 修改为可粘贴图片的contenteditable区域 -->
+                <div id="message-editor" contenteditable="true" placeholder="输入消息或粘贴图片..." class="message-editor"></div>
+                <button onclick="sendMessage()">发送</button>
+            </div>
+        </div>
+    </div>
+    <!-- 在页面底部添加图片模态框 -->
+    <div id="image-modal" class="image-modal">
+        <div class="modal-mask" onclick="closeImageModal()"></div>
+        <div class="modal-content">
+            <img id="modal-image" src="" alt="预览大图">
+            <div class="zoom-controls">
+                <button onclick="zoomImage(1.2)">+</button>
+                <button onclick="zoomImage(0.8)">-</button>
+                <button onclick="resetZoom()">重置</button>
+            </div>
+        </div>
+    </div>
+	
+	  <script>
+    window.difyChatbotConfig = {
+      token: 'p1YghKniX1MzPszj',
+      baseUrl: 'http://10.85.201.97'
+    }
+  </script>
+  <script
+    src="http://10.85.201.97/embed.min.js"
+    id="p1YghKniX1MzPszj"
+    defer>
+  </script>
+
+    <script>
+
+        const socket = io();
+        const nickname = "{{ nickname }}";
+        let lastSender = null; // 记录上一条消息的发送者
+
+        // 消息模板
+        function createMessageElement(msg) {
+            const div = document.createElement('div');
+            div.className = `message ${msg.nickname === "{{ nickname }}" ? 'self' : 'other'}`;  // 关键判断
+
+            // 文本内容
+            const textContent = msg.text ? `<div class="text">${msg.text}</div>` : '';
+
+            // 图片内容
+            const imageContent = msg.images.map(url => `
+        <img src="${url}" class="chat-image" 
+             loading="lazy" 
+             onclick="this.classList.toggle('zoom')">
+    `).join('');
+
+            let nicknameHtml = '';
+            if (lastSender!== msg.nickname) {
+                // 如果发送者与上一条消息不同，显示昵称
+                nicknameHtml = `
+                    <div class="meta">
+                        ${msg.nickname!== "{{ nickname }}" ?
+                        `<strong class="nickname">${msg.nickname}</strong>` : ''}
+                        <span class="time">${msg.time}</span>
+                        ${msg.nickname === "{{ nickname }}" ?
+                        `<strong class="nickname">你</strong>` : ''}
+                    </div>
+                `;
+            }
+            lastSender = msg.nickname; // 更新上一条消息的发送者
+
+            div.innerHTML = nicknameHtml;
+            if (textContent.trim()!== "") {
+                div.innerHTML = div.innerHTML + `<div class="bubble">${textContent}</div>`;
+            }
+            if (imageContent!== "") {
+                div.innerHTML = div.innerHTML + `<div class="bubble">${imageContent}</div>`;
+            }
+            // 给图片添加点击处理
+            div.querySelectorAll('.chat-image').forEach(img => {
+                img.onclick = (e) => {
+                    e.stopPropagation();
+                    showImageModal(img.src);
+                };
+            });
+            return div;
+        }
+
+        // 新增：生成柔和浅色函数
+        function nicknameToPastelColor(nickname) {
+            // 通过昵称哈希生成固定颜色
+            let hash = 0;
+            for (let i = 0; i < nickname.length; i++) {
+                hash = nickname.charCodeAt(i) + ((hash << 5) - hash);
+            }
+            const hue = Math.abs(hash) % 360;      // 色调范围 0-359
+            return `hsl(${hue}, 88%, 75%)`;        // 高亮度和适当饱和度
+        }
+
+        // 事件处理
+        socket.on('connect', () => {
+            console.log('已连接到服务器');
+        });
+
+        socket.on('new_message', (msg) => {
+            const messages = document.getElementById('chat-messages');
+            messages.appendChild(createMessageElement(msg));
+            messages.scrollTop = messages.scrollHeight;
+
+            // 如果窗口不在前台才触发提示
+            if (!isWindowFocused || document.hidden) {
+                unreadCount++;
+                updateUnreadCounter();
+                document.title = `(${unreadCount}) 新消息 - ${originalTitle}`;
+
+                // 播放提示音（仅在首次未读时）
+                if (unreadCount === 1) playNotificationSound();
+
+                // 显示浏览器通知
+                if (Notification.permission === 'granted') {
+                    showBrowserNotification(msg);
+                }
+            }
+        });
+
+        // 点击计数器清空未读
+        document.getElementById('unreadCounter').addEventListener('click', () => {
+            unreadCount = 0;
+            updateUnreadCounter();
+            document.title = originalTitle;
+        });
+
+        // 页面加载时请求通知权限
+        document.addEventListener('DOMContentLoaded', () => {
+            if (Notification.permission!== 'granted') {
+                Notification.requestPermission();
+            }
+        });
+
+        socket.on('system_message', (msg) => {
+            const div = document.createElement('div');
+            div.className = 'system-message';
+            div.innerHTML = `${msg.text} (${msg.time})`;
+            document.getElementById('chat-messages').appendChild(div);
+        });
+
+        socket.on('update_users', (users) => {
+            const list = document.getElementById('user-list');
+            const count = document.getElementById('user-count');
+            list.innerHTML = users.map(u => `<li>${u}</li>`).join('');
+            count.textContent = users.length;
+        });
+
+        // 新增：处理图片粘贴
+        document.getElementById('message-editor').addEventListener('paste', async (e) => {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+
+            // 查找粘贴内容中的图片
+            for (const item of items) {
+                if (item.type.startsWith('image')) {
+                    e.preventDefault();
+                    const file = item.getAsFile();
+                    const imageUrl = await uploadImage(file);
+                    insertImageToEditor(imageUrl);
+                }
+            }
+        });
+
+        // 新增：图片上传
+        async function uploadImage(file) {
+            const formData = new FormData();
+            formData.append('image', file);
+
+            const response = await fetch('/upload', {
+                method: 'POST',
+                body: formData
+            });
+
+            const result = await response.json();
+            return result.url;
+        }
+
+        // 新增：在编辑器中插入临时预览
+        function insertImageToEditor(url) {
+            const editor = document.getElementById('message-editor');
+            const img = document.createElement('img');
+            img.src = url;
+            img.className = 'upload-preview';
+            editor.appendChild(img);
+        }
+
+        // 新增：图片查看功能
+        let currentScale = 1;
+
+        // // 防止相同内容频繁通知
+        // const notificationCooldown = {};
+        // function showBrowserNotification(msg) {
+        //     const key = msg.nickname + msg.text;
+        //     if (!notificationCooldown[key]) {
+        //         // 发送通知...
+        //         notificationCooldown[key] = true;
+        //         setTimeout(() => delete notificationCooldown[key], 5000);
+        //     }
+        // }
+
+        function showImageModal(src) {
+            const modal = document.getElementById('image-modal');
+            const img = document.getElementById('modal-image');
+
+            // 加载原图（移除可能存在的缩略图参数）
+            const originSrc = src.replace(/thumbnail=true/, '');
+            img.src = originSrc;
+
+            // 重置缩放
+            currentScale = 1;
+            img.style.transform = `scale(${currentScale})`;
+
+            // 显示模态框
+            modal.style.display = 'block';
+            document.body.style.overflow = 'hidden';
+        }
+
+        function closeImageModal() {
+            document.getElementById('image-modal').style.display = 'none';
+            document.body.style.overflow = 'auto';
+        }
+
+        function zoomImage(factor) {
+            const img = document.getElementById('modal-image');
+            currentScale *= factor;
+            img.style.transform = `scale(${currentScale})`;
+        }
+
+        function resetZoom() {
+            currentScale = 1;
+            document.getElementById('modal-image').style.transform = 'scale(1)';
+        }
+
+        function sendMessage() {
+            const editor = document.getElementById('message-editor');
+            const images = Array.from(editor.getElementsByTagName('img'));
+            // 构建消息内容
+            const content = {
+                text: editor.innerText.trim(),
+                images: images.map(img => img.src)
+            };
+
+            if (content.text || content.images.length > 0) {
+                socket.emit('send_message', content);
+                editor.innerHTML = '';  // 清空编辑器
+            }
+        }
+
+        // 键盘操作支持
+        document.addEventListener('keydown', (e) => {
+            if (document.getElementById('image-modal').style.display === 'block') {
+                if (e.key === 'Escape') closeImageModal();
+                if (e.key === '+') zoomImage(1.2);
+                if (e.key === '-') zoomImage(0.8);
+                if (e.key === '0') resetZoom();
+            }
+        });
+
+        // 回车发送
+        document.getElementById('message-editor').addEventListener('keypress', (e) => {
+
+            if (e.key === 'Enter') {
+                e.preventDefault();
+                sendMessage();
+            }
+        });
+
+        // 新增：提示功能相关变量
+        let isWindowFocused = true;
+        let unreadCount = 0;
+        let originalTitle = document.title;
+
+        // 检测窗口焦点状态
+        window.addEventListener('focus', () => {
+            isWindowFocused = true;
+            document.title = originalTitle;
+            unreadCount = 0;
+        });
+
+        window.addEventListener('blur', () => {
+            isWindowFocused = false;
+        });
+
+        // 新增：播放提示音
+        function playNotificationSound() {
+            const audio = new Audio('/static/notification.mp3');
+            audio.play().catch(() => {
+                // 处理自动播放被阻止的情况
+                document.addEventListener('click', () => audio.play(), { once: true });
+            });
+        }
+
+        // 更新未读计数器显示
+        function updateUnreadCounter() {
+            const counter = document.getElementById('unreadCounter');
+            counter.textContent = unreadCount;
+            counter.style.display = unreadCount > 0? 'flex' : 'none';
+        }
+
+        // 新增：显示浏览器通知
+        function showBrowserNotification(message) {
+            if (Notification.permission === 'granted') {
+                new Notification('新消息', {
+                    body: `${message.nickname}: ${message.text}`,
+                    icon: '/static/icon.png'
+                });
+            }
+        }
+    </script>
+</body>
+
+</html>

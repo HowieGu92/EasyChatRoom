@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>聊天室</title>
+    <script src="https://cdn.socket.io/4.4.1/socket.io.min.js"></script>
+    <script>
+        var socket = io.connect('http://' + document.domain + ':' + location.port);
+        var username;
+
+        function joinChat() {
+            username = document.getElementById('username').value;
+            var password = document.getElementById('password').value;
+            socket.emit('join', {'username': username, 'password': password});
+        }
+
+        socket.on('error', function(error) {
+            alert(error);
+        });
+
+        socket.on('message', function(data) {
+            var decryptedMessage = atob(data.message);
+            var chatWindow = document.getElementById('chat-window');
+            chatWindow.innerHTML += `<p><strong>${data.username}:</strong> ${decryptedMessage}</p>`;
+        });
+
+        socket.on('online_users', function(users) {
+            var onlineUsersList = document.getElementById('online-users');
+            onlineUsersList.innerHTML = '';
+            users.forEach(function(user) {
+                onlineUsersList.innerHTML += `<li>${user}</li>`;
+            });
+        });
+
+        function sendMessage() {
+            var message = document.getElementById('message').value;
+            socket.emit('message', {'message': message, 'username': username});
+            document.getElementById('message').value = '';
+        }
+    </script>
+</head>
+<body>
+    <h1>聊天室</h1>
+    <input type="text" id="username" placeholder="用户名">
+    <input type="password" id="password" placeholder="密码">
+    <button onclick="joinChat()">加入聊天室</button>
+    <div id="chat-window"></div>
+    <input type="text" id="message" placeholder="输入消息">
+    <button onclick="sendMessage()">发送</button>
+    <h2>在线用户</h2>
+    <ul id="online-users"></ul>
+</body>
+</html>
